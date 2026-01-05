@@ -1,0 +1,5 @@
+{
+  "name": "MOTI-ON",
+  "description": "A momentum-based planner app. Motivation follows Motion.",
+  "requestFramePermissions": []
+}

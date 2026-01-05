@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>MOTI-ON</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'],
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+        body { 
+            -webkit-tap-highlight-color: transparent; 
+            overscroll-behavior-y: none; /* Prevent pull-to-refresh/bounce on mobile */
+        }
+        /* Prevent layout shift by reserving scrollbar space */
+        html { scrollbar-gutter: stable; }
+        
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        /* Heatmap Levels */
+        .lv-0 { background-color: #f8fafc; color: #e2e8f0; }
+        .lv-1 { background-color: #e0e7ff; color: #6366f1; }
+        .lv-2 { background-color: #a5b4fc; color: #4338ca; }
+        .lv-3 { background-color: #6366f1; color: #fff; }
+        .lv-4 { background-color: #4338ca; color: #fff; }
+        
+        .dark .lv-0 { background-color: #1e293b; color: #334155; }
+        .dark .lv-1 { background-color: #312e81; color: #818cf8; }
+        .dark .lv-2 { background-color: #3730a3; color: #a5b4fc; }
+        .dark .lv-3 { background-color: #4338ca; color: #fff; }
+        .dark .lv-4 { background-color: #4f46e5; color: #fff; }
+
+        /* Sortable Ghost */
+        .sortable-ghost { opacity: 0.4; background: #e0e7ff; border-style: dashed; }
+        .dark .sortable-ghost { background: #312e81; }
+        
+        /* Safe Area Utilities */
+        .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
+    "sortablejs": "https://esm.sh/sortablejs@^1.15.6",
+    "canvas-confetti": "https://esm.sh/canvas-confetti@1.9.2"
+  }
+}
+</script>
+</head>
+<body class="bg-[#fcfdff] dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased select-none overflow-x-hidden transition-colors duration-300">
+    <div id="root"></div>
+</body>
+</html>
