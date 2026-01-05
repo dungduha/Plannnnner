@@ -242,10 +242,22 @@ const App: React.FC = () => {
 
     // --- Actions ---
     const addTask = (taskData: Omit<Task, 'id' | 'dateCreated' | 'completions' | 'hiddenDates'>) => {
+        // Auto-move to tomorrow if time has passed and we are on "today"
+        let finalDate = selectedDate;
+        if (selectedDate === todayStr && taskData.time) {
+             const now = new Date();
+             const currentHM = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+             if (taskData.time < currentHM) {
+                 const d = new Date();
+                 d.setDate(d.getDate() + 1);
+                 finalDate = getLocalISO(d);
+             }
+        }
+
         const newTask: Task = {
             id: Date.now(),
             ...taskData,
-            dateCreated: selectedDate,
+            dateCreated: finalDate,
             completions: [],
             hiddenDates: [],
             notes: "" // Initialize notes
@@ -347,6 +359,22 @@ const App: React.FC = () => {
         setTasks(prev => prev.map(t => t.id === id ? { ...t, notes } : t));
     };
 
+    const updateTaskCategory = (id: number, category: Category) => {
+        setTasks(prev => prev.map(t => t.id === id ? { ...t, category } : t));
+    };
+
+    const updateTaskType = (id: number, type: TaskType) => {
+        setTasks(prev => prev.map(t => {
+            if (t.id !== id) return t;
+            // When changing type, ensure weeklyDay is set if switching to weekly
+            return { 
+                ...t, 
+                type,
+                weeklyDay: type === 'weekly' && t.weeklyDay === undefined ? new Date().getDay() : t.weeklyDay
+            };
+        }));
+    };
+
     // Stops the alarm loop and clears the state
     const dismissAlarm = () => {
         if (stopAlarmRef.current) {
@@ -418,6 +446,33 @@ const App: React.FC = () => {
              tasks.filter(t => shouldShowTask(t, ds)).forEach(t => weekTaskIds.add(t.id));
          }
          visibleTasks = tasks.filter(t => weekTaskIds.has(t.id));
+
+         // Sort Week Tasks by Date ASC
+         visibleTasks.sort((a, b) => {
+             const getSortDate = (t: Task) => {
+                 if (t.type === 'one-time') return t.dateCreated;
+                 if (t.type === 'recurring') return selectedDate;
+                 if (t.type === 'weekly' && t.weeklyDay !== undefined) {
+                     const start = parseLocalDate(selectedDate);
+                     const currentDay = start.getDay();
+                     const diff = (t.weeklyDay - currentDay + 7) % 7;
+                     const d = new Date(start);
+                     d.setDate(d.getDate() + diff);
+                     return getLocalISO(d);
+                 }
+                 return t.dateCreated;
+             };
+             
+             const dateA = getSortDate(a);
+             const dateB = getSortDate(b);
+             if (dateA !== dateB) return dateA.localeCompare(dateB);
+             
+             // Same date? Time priority
+             if (a.time && b.time) return a.time.localeCompare(b.time);
+             if (a.time) return -1;
+             if (b.time) return 1;
+             return 0;
+         });
     } else if (currentView === 'history' && historyDrilldownDate) {
         visibleTasks = tasks.filter(t => shouldShowTask(t, historyDrilldownDate));
         contextDate = historyDrilldownDate;
@@ -473,6 +528,9 @@ const App: React.FC = () => {
             const d = new Date();
             d.setDate(d.getDate() + offset);
             setSelectedDate(getLocalISO(d));
+        } else if (view === 'week') {
+            // Fix: Always start Week view from Today so it's consistent
+            setSelectedDate(getLocalISO());
         }
     };
 
@@ -647,10 +705,12 @@ const App: React.FC = () => {
                             onMoveTask={requestMoveTask}
                             onUpdateText={updateTaskText}
                             onUpdateTime={updateTaskTime}
+                            onUpdateNotes={updateTaskNotes}
                             onCycleCategory={cycleCategory}
                             onCycleType={cycleType}
                             onUpdateWeeklyDay={updateWeeklyDay}
-                            onUpdateNotes={updateTaskNotes}
+                            onUpdateCategory={updateTaskCategory}
+                            onUpdateType={updateTaskType}
                             onReorder={(newOrder) => {
                                 // We merge the `newOrder` (which likely contains only what was draggable or all visible)
                                 // back into the main state.

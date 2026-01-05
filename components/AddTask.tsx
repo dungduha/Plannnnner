@@ -162,7 +162,7 @@ const AddTask: React.FC<AddTaskProps> = ({ onAdd }) => {
                     onKeyDown={handleKeyDown}
                     maxLength={100}
                     placeholder="What's the next win?"
-                    className="w-full bg-slate-50 dark:bg-slate-800 rounded-2xl pl-6 pr-24 py-4 text-lg font-bold outline-none text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-indigo-100 dark:focus:ring-indigo-900/30 transition-all"
+                    className="w-full bg-slate-50 dark:bg-slate-800 rounded-2xl pl-6 pr-24 py-4 text-base sm:text-lg font-bold outline-none text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-indigo-100 dark:focus:ring-indigo-900/30 transition-all"
                 />
                 
                 {/* Time Trigger Icon */}
