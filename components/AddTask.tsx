@@ -240,13 +240,13 @@ const AddTask: React.FC<AddTaskProps> = ({ onAdd }) => {
             </div>
             
             <div className="flex flex-col gap-3">
-                <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-3 sm:gap-2 flex-wrap">
                     <div className="flex-grow flex bg-slate-100 dark:bg-slate-800 rounded-xl p-1 overflow-hidden min-w-[150px]">
                         {(['one-time', 'recurring', 'weekly'] as TaskType[]).map((t) => (
                             <button
                                 key={t}
                                 onClick={() => setType(t)}
-                                className={`flex-1 text-[9px] font-black uppercase py-3.5 rounded-lg transition-all ${
+                                className={`flex-1 text-[9px] font-black uppercase py-3.5 sm:py-2.5 rounded-lg transition-all ${
                                     type === t 
                                     ? 'bg-white dark:bg-slate-700 text-indigo-600 shadow-sm' 
                                     : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
@@ -265,7 +265,7 @@ const AddTask: React.FC<AddTaskProps> = ({ onAdd }) => {
                         <select 
                             value={category}
                             onChange={(e) => setCategory(e.target.value as Category)}
-                            className="text-[10px] font-black uppercase bg-slate-100 dark:bg-slate-800 rounded-xl pl-4 pr-10 py-4 outline-none text-slate-500 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors appearance-none"
+                            className="text-[10px] font-black uppercase bg-slate-100 dark:bg-slate-800 rounded-xl pl-4 pr-10 py-4 sm:py-3 outline-none text-slate-500 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors appearance-none"
                         >
                             <option value="personal">Personal</option>
                             <option value="work">Work</option>
@@ -277,9 +277,12 @@ const AddTask: React.FC<AddTaskProps> = ({ onAdd }) => {
 
                     <button 
                         onClick={() => handleSubmit()}
-                        className="bg-indigo-600 text-white h-[60px] w-[60px] rounded-2xl shadow-lg flex items-center justify-center active:scale-95 transition-transform hover:bg-indigo-700 ml-auto shrink-0"
+                        className="bg-indigo-600 text-white shadow-lg flex items-center justify-center active:scale-95 transition-transform hover:bg-indigo-700 shrink-0
+                        w-full sm:w-[50px]
+                        h-[60px] sm:h-[42px]
+                        rounded-2xl sm:rounded-xl"
                     >
-                        <Plus size={30} strokeWidth={3} />
+                        <Plus className="w-8 h-8 sm:w-5 sm:h-5" strokeWidth={3} />
                     </button>
                 </div>
 
