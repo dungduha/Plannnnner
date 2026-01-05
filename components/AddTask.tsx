@@ -246,7 +246,7 @@ const AddTask: React.FC<AddTaskProps> = ({ onAdd }) => {
                             <button
                                 key={t}
                                 onClick={() => setType(t)}
-                                className={`flex-1 text-[9px] font-black uppercase py-2.5 rounded-lg transition-all ${
+                                className={`flex-1 text-[9px] font-black uppercase py-3.5 rounded-lg transition-all ${
                                     type === t 
                                     ? 'bg-white dark:bg-slate-700 text-indigo-600 shadow-sm' 
                                     : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
@@ -265,7 +265,7 @@ const AddTask: React.FC<AddTaskProps> = ({ onAdd }) => {
                         <select 
                             value={category}
                             onChange={(e) => setCategory(e.target.value as Category)}
-                            className="text-[10px] font-black uppercase bg-slate-100 dark:bg-slate-800 rounded-xl pl-4 pr-10 py-3 outline-none text-slate-500 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors appearance-none"
+                            className="text-[10px] font-black uppercase bg-slate-100 dark:bg-slate-800 rounded-xl pl-4 pr-10 py-4 outline-none text-slate-500 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors appearance-none"
                         >
                             <option value="personal">Personal</option>
                             <option value="work">Work</option>
@@ -277,9 +277,9 @@ const AddTask: React.FC<AddTaskProps> = ({ onAdd }) => {
 
                     <button 
                         onClick={() => handleSubmit()}
-                        className="bg-indigo-600 text-white h-[42px] w-[50px] rounded-xl shadow-lg flex items-center justify-center active:scale-95 transition-transform hover:bg-indigo-700 ml-auto sm:ml-0"
+                        className="bg-indigo-600 text-white h-[60px] w-[60px] rounded-2xl shadow-lg flex items-center justify-center active:scale-95 transition-transform hover:bg-indigo-700 ml-auto shrink-0"
                     >
-                        <Plus size={20} strokeWidth={3} />
+                        <Plus size={30} strokeWidth={3} />
                     </button>
                 </div>
 
