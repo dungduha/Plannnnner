@@ -13,10 +13,7 @@
     "react-dom": "^19.2.3",
     "lucide-react": "^0.562.0",
     "sortablejs": "^1.15.6",
-    "canvas-confetti": "1.9.2",
-    "@vitejs/plugin-react": "^5.1.2",
-    "vite": "^7.3.0",
-    "vite-plugin-pwa": "^1.2.0"
+    "canvas-confetti": "1.9.2"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
