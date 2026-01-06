@@ -2,10 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Task, ViewMode, QUOTES, TaskType, Category } from './types';
 import { getLocalISO, parseLocalDate, shouldShowTask } from './utils';
 import Sidebar from './components/Sidebar';
-import TaskList from './components/TaskList';
+import TaskList, { EditTaskModal } from './components/TaskList';
 import AddTask from './components/AddTask';
 import History from './components/History';
-import { Menu, Moon, Sun, Home, CalendarDays, BarChart2, Sunrise, Bell, X, CheckCircle2, Clock } from 'lucide-react';
+import { Menu, Moon, Sun, Home, CalendarDays, BarChart2, Sunrise, Bell, CheckCircle2, Clock } from 'lucide-react';
 import confetti from 'https://esm.sh/canvas-confetti@1.9.2';
 
 // --- Audio Engine ---
@@ -15,14 +15,12 @@ const initAudio = () => {
     if (!audioCtx) {
         audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
     }
-    // Always check if suspended and try to resume
     if (audioCtx.state === 'suspended') {
         audioCtx.resume().catch(e => console.log("Audio resume failed (expected if no interaction)", e));
     }
     return audioCtx;
 };
 
-// Starts a looping alarm and returns a function to stop it
 const startAlarmLoop = (): (() => void) => {
     const ctx = initAudio();
     if (!ctx) return () => {};
@@ -32,7 +30,6 @@ const startAlarmLoop = (): (() => void) => {
     let currentGain: GainNode | null = null;
 
     const playCycle = () => {
-        // Try to resume if suspended (requires user gesture previously)
         if (ctx.state === 'suspended') ctx.resume().catch(() => {});
         
         const t = ctx.currentTime;
@@ -45,23 +42,18 @@ const startAlarmLoop = (): (() => void) => {
         osc.connect(gain);
         gain.connect(ctx.destination);
         
-        // Use Square wave for "buzzer" effect - aggressive and audible
         osc.type = 'square';
         
-        // Pattern: Beep-Beep-Beep (High urgency)
-        // Beep 1
         osc.frequency.setValueAtTime(880, t);
         gain.gain.setValueAtTime(0.1, t);
         gain.gain.setValueAtTime(0.1, t + 0.15);
         gain.gain.linearRampToValueAtTime(0, t + 0.2);
 
-        // Beep 2
         osc.frequency.setValueAtTime(880, t + 0.3);
         gain.gain.setValueAtTime(0.1, t + 0.3);
         gain.gain.setValueAtTime(0.1, t + 0.45);
         gain.gain.linearRampToValueAtTime(0, t + 0.5);
 
-        // Beep 3 (Higher/Longer)
         osc.frequency.setValueAtTime(1760, t + 0.6);
         gain.gain.setValueAtTime(0.1, t + 0.6);
         gain.gain.setValueAtTime(0.1, t + 0.9);
@@ -78,11 +70,9 @@ const startAlarmLoop = (): (() => void) => {
         };
     };
 
-    // Play immediately then loop
     playCycle();
-    intervalId = setInterval(playCycle, 2000); // Loop sequence every 2 seconds
+    intervalId = setInterval(playCycle, 2000);
 
-    // Return cleanup function
     return () => {
         clearInterval(intervalId);
         if (currentOsc) {
@@ -105,26 +95,26 @@ const App: React.FC = () => {
     const [historyDrilldownDate, setHistoryDrilldownDate] = useState<string | null>(null);
     const [deleteModalId, setDeleteModalId] = useState<number | null>(null);
     const [moveModalId, setMoveModalId] = useState<number | null>(null);
-    const [activeAlert, setActiveAlert] = useState<Task | null>(null); // State for in-app alarm popup
+    const [activeAlert, setActiveAlert] = useState<Task | null>(null);
     
-    // Track notified tasks for the current session to prevent spam
+    // Editing State (Draft)
+    const [editingTask, setEditingTask] = useState<Task | null>(null);
+    
+    // Swipe State
+    const [touchStart, setTouchStart] = useState<number | null>(null);
+    const [touchEnd, setTouchEnd] = useState<number | null>(null);
+
     const notifiedTasksRef = useRef<Set<string>>(new Set());
-    
-    // Track the stop function for the currently playing alarm
     const stopAlarmRef = useRef<(() => void) | null>(null);
-    
-    // Track previous percentage to trigger confetti
     const prevPercentageRef = useRef(0);
 
     // --- Init ---
     useEffect(() => {
-        // Load Tasks
         const storedTasks = localStorage.getItem('pro_tasks');
         if (storedTasks) {
             setTasks(JSON.parse(storedTasks));
         }
 
-        // Load Theme
         const storedTheme = localStorage.getItem('theme');
         const sysDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
         if (storedTheme === 'dark' || (!storedTheme && sysDark)) {
@@ -132,10 +122,8 @@ const App: React.FC = () => {
             document.documentElement.classList.add('dark');
         }
 
-        // Unlock Audio Context on first interaction
         const unlockAudio = () => {
             initAudio();
-            // Also try to request notification permission if not yet decided
             if ('Notification' in window && Notification.permission === 'default') {
                 Notification.requestPermission();
             }
@@ -155,11 +143,11 @@ const App: React.FC = () => {
         };
     }, []);
 
-    // --- Global Keyboard Shortcuts ---
     useEffect(() => {
         const handleGlobalKey = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
                 if (activeAlert) dismissAlarm();
+                else if (editingTask) setEditingTask(null);
                 else if (deleteModalId !== null) setDeleteModalId(null);
                 else if (moveModalId !== null) setMoveModalId(null);
                 else if (isSidebarOpen) setIsSidebarOpen(false);
@@ -168,7 +156,7 @@ const App: React.FC = () => {
         };
         window.addEventListener('keydown', handleGlobalKey);
         return () => window.removeEventListener('keydown', handleGlobalKey);
-    }, [activeAlert, deleteModalId, moveModalId, isSidebarOpen, historyDrilldownDate]);
+    }, [activeAlert, editingTask, deleteModalId, moveModalId, isSidebarOpen, historyDrilldownDate]);
 
     useEffect(() => {
         localStorage.setItem('pro_tasks', JSON.stringify(tasks));
@@ -191,21 +179,16 @@ const App: React.FC = () => {
             const currentHM = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
             const todayISO = getLocalISO();
 
-            // Only notify for tasks visible on "Today"
             tasks.forEach(t => {
-                // Check if task is valid for today and NOT completed
                 if (shouldShowTask(t, todayISO) && !t.completions.includes(todayISO)) {
                     if (t.time === currentHM) {
                         const notificationKey = `${t.id}-${todayISO}-${currentHM}`;
                         if (!notifiedTasksRef.current.has(notificationKey)) {
-                            // 1. Stop any existing alarm
                             if (stopAlarmRef.current) stopAlarmRef.current();
 
-                            // 2. Start Looping Alarm
                             const stopFn = startAlarmLoop();
                             stopAlarmRef.current = stopFn;
 
-                            // 3. Auto-stop after 1 minute (60,000ms)
                             setTimeout(() => {
                                 if (stopAlarmRef.current === stopFn) {
                                     stopFn();
@@ -213,10 +196,8 @@ const App: React.FC = () => {
                                 }
                             }, 60000);
                             
-                            // 4. Show In-App Modal
                             setActiveAlert(t);
 
-                            // 5. Send System Notification
                             if ('Notification' in window && Notification.permission === 'granted') {
                                 new Notification("IT'S TIME!", {
                                     body: t.text,
@@ -224,52 +205,139 @@ const App: React.FC = () => {
                                     requireInteraction: true
                                 });
                             }
-
-                            // Mark as notified so we don't spam every 10s
                             notifiedTasksRef.current.add(notificationKey);
                         }
                     }
                 }
             });
-        }, 10000); // Check every 10 seconds for precision
+        }, 10000);
 
         return () => clearInterval(interval);
     }, [tasks]);
 
     // --- Computed Helpers ---
     const todayStr = getLocalISO();
+    const getTomorrowStr = () => {
+        const d = new Date();
+        d.setDate(d.getDate() + 1);
+        return getLocalISO(d);
+    };
+    const tomorrowStr = getTomorrowStr();
     const moveDirection = selectedDate > todayStr ? 'backward' : 'forward';
 
-    // --- Actions ---
-    const addTask = (taskData: Omit<Task, 'id' | 'dateCreated' | 'completions' | 'hiddenDates'>) => {
-        // Auto-move to tomorrow if time has passed and we are on "today"
-        let finalDate = selectedDate;
-        if (selectedDate === todayStr && taskData.time) {
-             const now = new Date();
-             const currentHM = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
-             if (taskData.time < currentHM) {
-                 const d = new Date();
-                 d.setDate(d.getDate() + 1);
-                 finalDate = getLocalISO(d);
-             }
-        }
-
-        const newTask: Task = {
-            id: Date.now(),
-            ...taskData,
-            dateCreated: finalDate,
-            completions: [],
-            hiddenDates: [],
-            notes: "" // Initialize notes
-        };
-        setTasks(prev => [newTask, ...prev]);
-        
-        // Aggressively request permission if adding a timed task
-        if (taskData.time && 'Notification' in window && Notification.permission !== 'granted') {
-             Notification.requestPermission();
+    const setViewDate = (view: ViewMode, offset: number = 0) => {
+        setCurrentView(view);
+        setHistoryDrilldownDate(null);
+        if (view === 'day') {
+            const d = new Date();
+            d.setDate(d.getDate() + offset);
+            setSelectedDate(getLocalISO(d));
+        } else if (view === 'week') {
+            setSelectedDate(getLocalISO());
         }
     };
 
+    const onTouchStart = (e: React.TouchEvent) => {
+        if ((e.target as HTMLElement).closest('.task-item') || (e.target as HTMLElement).closest('input') || editingTask) {
+             return;
+        }
+        setTouchEnd(null);
+        setTouchStart(e.targetTouches[0].clientX);
+    };
+
+    const onTouchMove = (e: React.TouchEvent) => {
+        setTouchEnd(e.targetTouches[0].clientX);
+    };
+
+    const onTouchEnd = () => {
+        if (!touchStart || !touchEnd) return;
+        const distance = touchStart - touchEnd;
+        const minSwipeDistance = 50;
+        const isLeftSwipe = distance > minSwipeDistance;
+        const isRightSwipe = distance < -minSwipeDistance;
+
+        if (isLeftSwipe || isRightSwipe) {
+            let currentIndex = 0;
+            if (currentView === 'day') {
+                if (selectedDate === todayStr) currentIndex = 0;
+                else if (selectedDate === tomorrowStr) currentIndex = 1;
+                else currentIndex = 0;
+            } else if (currentView === 'week') currentIndex = 2;
+            else if (currentView === 'history') currentIndex = 3;
+
+            let newIndex = currentIndex;
+            if (isLeftSwipe) { if (newIndex < 3) newIndex++; } 
+            else if (isRightSwipe) { if (newIndex > 0) newIndex--; }
+
+            if (newIndex !== currentIndex) {
+                if (newIndex === 0) setViewDate('day', 0);
+                else if (newIndex === 1) setViewDate('day', 1);
+                else if (newIndex === 2) setViewDate('week');
+                else if (newIndex === 3) setCurrentView('history');
+            }
+        }
+    };
+
+    // --- Add/Edit Logic ---
+
+    const startAddTask = () => {
+        // Create a temporary ID (negative) to signal it's new
+        const newTask: Task = {
+            id: -Date.now(),
+            text: '',
+            type: 'one-time',
+            category: 'personal',
+            dateCreated: selectedDate, // Start with selected date
+            completions: [],
+            hiddenDates: [],
+            notes: '',
+            weeklyDay: new Date(selectedDate).getDay()
+        };
+        setEditingTask(newTask);
+    };
+
+    const saveEditingTask = () => {
+        if (!editingTask) return;
+
+        // If no text, and it's a new task (negative ID), simply discard it.
+        // This effectively handles "Cancel" behavior for new tasks.
+        if (!editingTask.text.trim()) {
+            if (editingTask.id < 0) {
+                setEditingTask(null);
+                return;
+            }
+            // If existing task has no text, we might want to keep it open or revert?
+            // For now, let's just keep it open to force user to enter text or delete properly.
+            return;
+        }
+
+        setTasks(prev => {
+            // Check if this is a new task (negative ID)
+            if (editingTask.id < 0) {
+                const newTask = { ...editingTask, id: Date.now() };
+                
+                // Permission check for notifications on new timed tasks
+                if (newTask.time && 'Notification' in window && Notification.permission !== 'granted') {
+                    Notification.requestPermission();
+                }
+                
+                return [newTask, ...prev];
+            } else {
+                // Update existing
+                return prev.map(t => t.id === editingTask.id ? editingTask : t);
+            }
+        });
+        setEditingTask(null);
+    };
+
+    const deleteEditingTask = (id: number) => {
+        if (id > 0) {
+            setDeleteModalId(id);
+        }
+        setEditingTask(null);
+    };
+
+    // --- Actions ---
     const toggleTask = (id: number) => {
         setTasks(prev => prev.map(t => {
             if (t.id !== id) return t;
@@ -314,16 +382,13 @@ const App: React.FC = () => {
             current.setDate(current.getDate() + offset);
             const targetDateStr = getLocalISO(current);
 
-            // 1. Hide from current date
             const newHidden = new Set(t.hiddenDates || []);
             newHidden.add(selectedDate);
 
-            // 2. Ensure visible on target date (if it was previously hidden there)
             if (newHidden.has(targetDateStr)) {
                 newHidden.delete(targetDateStr);
             }
 
-            // 3. Adjust dateCreated if necessary (for one-time tasks primarily)
             let newDateCreated = t.dateCreated;
             if (t.type === 'one-time') {
                  if (targetDateStr < t.dateCreated) {
@@ -346,36 +411,21 @@ const App: React.FC = () => {
         setMoveModalId(null);
     };
 
-    const updateTaskText = (id: number, text: string) => {
-        if (!text.trim()) return;
-        setTasks(prev => prev.map(t => t.id === id ? { ...t, text: text.trim().substring(0, 100) } : t));
-    };
-
     const updateTaskTime = (id: number, time: string | undefined) => {
+        // Deprecated usage from direct list, but needed for Snooze
         setTasks(prev => prev.map(t => t.id === id ? { ...t, time } : t));
     };
 
-    const updateTaskNotes = (id: number, notes: string) => {
-        setTasks(prev => prev.map(t => t.id === id ? { ...t, notes } : t));
-    };
+    // Keep these empty/stubbed as we moved to Modal editing mostly, but List might call them if not fully refactored?
+    // Actually List calls onEdit now.
+    const updateTaskText = (id: number, text: string) => {}; 
+    const updateTaskNotes = (id: number, notes: string) => {};
+    const updateTaskCategory = (id: number, category: Category) => {};
+    const updateTaskType = (id: number, type: TaskType) => {};
+    const cycleCategory = (id: number) => {};
+    const cycleType = (id: number) => {};
+    const updateWeeklyDay = (id: number, day: number) => {};
 
-    const updateTaskCategory = (id: number, category: Category) => {
-        setTasks(prev => prev.map(t => t.id === id ? { ...t, category } : t));
-    };
-
-    const updateTaskType = (id: number, type: TaskType) => {
-        setTasks(prev => prev.map(t => {
-            if (t.id !== id) return t;
-            // When changing type, ensure weeklyDay is set if switching to weekly
-            return { 
-                ...t, 
-                type,
-                weeklyDay: type === 'weekly' && t.weeklyDay === undefined ? new Date().getDay() : t.weeklyDay
-            };
-        }));
-    };
-
-    // Stops the alarm loop and clears the state
     const dismissAlarm = () => {
         if (stopAlarmRef.current) {
             stopAlarmRef.current();
@@ -386,54 +436,23 @@ const App: React.FC = () => {
 
     const snoozeTask = () => {
         if (!activeAlert || !activeAlert.time) return;
-        
         const [h, m] = activeAlert.time.split(':').map(Number);
         const date = new Date();
         date.setHours(h);
         date.setMinutes(m + 5);
-        
         const newTime = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-        
         updateTaskTime(activeAlert.id, newTime);
-        dismissAlarm(); // Stop sound
+        dismissAlarm();
     };
 
     const markActiveAlertDone = () => {
         if (activeAlert) {
             toggleTask(activeAlert.id);
-            dismissAlarm(); // Stop sound
+            dismissAlarm();
         }
     };
 
-    const cycleCategory = (id: number) => {
-        const cats: Category[] = ['personal', 'work', 'health', 'other'];
-        setTasks(prev => prev.map(t => {
-            if (t.id !== id) return t;
-            const idx = cats.indexOf(t.category);
-            return { ...t, category: cats[(idx + 1) % cats.length] };
-        }));
-    };
-
-    const cycleType = (id: number) => {
-        const types: TaskType[] = ['one-time', 'recurring', 'weekly'];
-        setTasks(prev => prev.map(t => {
-            if (t.id !== id) return t;
-            const idx = types.indexOf(t.type);
-            const nextType = types[(idx + 1) % types.length];
-            return { 
-                ...t, 
-                type: nextType,
-                weeklyDay: nextType === 'weekly' && t.weeklyDay === undefined ? new Date().getDay() : t.weeklyDay
-            };
-        }));
-    };
-
-    const updateWeeklyDay = (id: number, day: number) => {
-        setTasks(prev => prev.map(t => t.id === id ? { ...t, weeklyDay: day } : t));
-    };
-
     // --- Computed Data ---
-    // Prepare tasks for the current view
     let visibleTasks: Task[] = [];
     let contextDate = selectedDate;
 
@@ -447,7 +466,6 @@ const App: React.FC = () => {
          }
          visibleTasks = tasks.filter(t => weekTaskIds.has(t.id));
 
-         // Sort Week Tasks by Date ASC
          visibleTasks.sort((a, b) => {
              const getSortDate = (t: Task) => {
                  if (t.type === 'one-time') return t.dateCreated;
@@ -466,8 +484,6 @@ const App: React.FC = () => {
              const dateA = getSortDate(a);
              const dateB = getSortDate(b);
              if (dateA !== dateB) return dateA.localeCompare(dateB);
-             
-             // Same date? Time priority
              if (a.time && b.time) return a.time.localeCompare(b.time);
              if (a.time) return -1;
              if (b.time) return 1;
@@ -480,62 +496,49 @@ const App: React.FC = () => {
         visibleTasks = tasks.filter(t => shouldShowTask(t, selectedDate));
     }
 
-    // --- Sorting Logic ---
-    // 1. Separate Active and Completed
     const activeTasks = visibleTasks.filter(t => !t.completions.includes(contextDate));
     const completedTasks = visibleTasks.filter(t => t.completions.includes(contextDate));
 
-    // 2. Sort Active: Timed tasks first (chronological), then Untimed (manual order)
     const timedActive = activeTasks.filter(t => !!t.time).sort((a, b) => a.time!.localeCompare(b.time!));
-    const untimedActive = activeTasks.filter(t => !t.time); // Maintain array order (manual)
-
-    // Note: We are passing ALL visible tasks to TaskList. 
-    // TaskList will handle the visual separation of Timed vs Untimed to fix the D&D issue.
+    const untimedActive = activeTasks.filter(t => !t.time);
     const sortedVisibleTasks = [...timedActive, ...untimedActive, ...completedTasks];
 
-    // Stats
     const totalCount = sortedVisibleTasks.length;
     const completedCount = completedTasks.length;
     const percentage = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
     
-    // Confetti Effect
     useEffect(() => {
         if (percentage === 100 && totalCount > 0 && prevPercentageRef.current < 100) {
-            confetti({
-                particleCount: 100,
-                spread: 70,
-                origin: { y: 0.6 }
-            });
+            confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
         }
         prevPercentageRef.current = percentage;
     }, [percentage, totalCount]);
 
-    // Header Text
     let headerText = parseLocalDate(selectedDate).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
     if (currentView === 'week') headerText = "Upcoming Week";
     if (currentView === 'history') headerText = "Momentum History";
     if (currentView === 'history' && historyDrilldownDate) headerText = `Tasks for ${historyDrilldownDate}`;
 
-    // Quote
     const quotePool = percentage === 100 && totalCount > 0 ? QUOTES.finish : (percentage > 0 ? QUOTES.progress : QUOTES.start);
-    const quote = quotePool[selectedDate.charCodeAt(selectedDate.length - 1) % quotePool.length]; // Stable random based on date char
-
-    // Navigation Helper
-    const setViewDate = (view: ViewMode, offset: number = 0) => {
-        setCurrentView(view);
-        setHistoryDrilldownDate(null);
-        if (view === 'day') {
-            const d = new Date();
-            d.setDate(d.getDate() + offset);
-            setSelectedDate(getLocalISO(d));
-        } else if (view === 'week') {
-            // Fix: Always start Week view from Today so it's consistent
-            setSelectedDate(getLocalISO());
-        }
-    };
+    const quote = quotePool[selectedDate.charCodeAt(selectedDate.length - 1) % quotePool.length];
 
     return (
-        <>
+        <div 
+            onTouchStart={onTouchStart}
+            onTouchMove={onTouchMove}
+            onTouchEnd={onTouchEnd}
+            className="min-h-screen"
+        >
+             {/* Edit/Add Modal */}
+             {editingTask && (
+                 <EditTaskModal 
+                    task={editingTask}
+                    onChange={setEditingTask}
+                    onClose={saveEditingTask}
+                    onDelete={deleteEditingTask}
+                 />
+             )}
+
              {/* Delete Modal */}
              {deleteModalId !== null && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -559,11 +562,6 @@ const App: React.FC = () => {
                         <h3 className="text-xl font-black text-center dark:text-white">
                             {moveDirection === 'forward' ? 'Push to Tomorrow?' : 'Pull to Previous Day?'}
                         </h3>
-                        <p className="text-slate-500 text-sm font-bold text-center mt-3">
-                            {moveDirection === 'forward' 
-                                ? "This will move the task to the next day." 
-                                : "This will move the task to the previous day."}
-                        </p>
                         <div className="flex gap-4 mt-8">
                             <button onClick={() => setMoveModalId(null)} className="flex-1 py-4 bg-slate-100 dark:bg-slate-800 rounded-2xl text-[10px] font-black uppercase text-slate-500 hover:bg-slate-200 transition-colors">Cancel</button>
                             <button onClick={executeMoveTask} className="flex-1 py-4 bg-indigo-600 rounded-2xl text-[10px] font-black uppercase text-white shadow-lg hover:bg-indigo-700 transition-colors">
@@ -644,7 +642,6 @@ const App: React.FC = () => {
                             </div>
                         </div>
                         
-                        {/* Progress Circle */}
                         {currentView !== 'history' && (
                             <div className="relative w-16 h-16 shrink-0">
                                 <svg viewBox="0 0 64 64" className="w-full h-full transform -rotate-90">
@@ -679,14 +676,13 @@ const App: React.FC = () => {
                         tasks={tasks} 
                         onDrillDown={(d) => {
                             setHistoryDrilldownDate(d);
-                            // Keep view as history, but show list
                         }}
                         drillDownDate={historyDrilldownDate}
                     />
                 ) : (
                     <>
                         {currentView === 'day' && !historyDrilldownDate && (
-                            <AddTask onAdd={addTask} />
+                            <AddTask onTrigger={startAddTask} />
                         )}
                         
                         {historyDrilldownDate && (
@@ -703,6 +699,7 @@ const App: React.FC = () => {
                             onToggle={toggleTask}
                             onDelete={confirmDelete}
                             onMoveTask={requestMoveTask}
+                            onEdit={(task) => setEditingTask({ ...task })}
                             onUpdateText={updateTaskText}
                             onUpdateTime={updateTaskTime}
                             onUpdateNotes={updateTaskNotes}
@@ -712,8 +709,6 @@ const App: React.FC = () => {
                             onUpdateCategory={updateTaskCategory}
                             onUpdateType={updateTaskType}
                             onReorder={(newOrder) => {
-                                // We merge the `newOrder` (which likely contains only what was draggable or all visible)
-                                // back into the main state.
                                 const visibleIds = new Set(newOrder.map(t => t.id));
                                 const otherTasks = tasks.filter(t => !visibleIds.has(t.id));
                                 setTasks([...newOrder, ...otherTasks]);
@@ -754,7 +749,7 @@ const App: React.FC = () => {
                     <span className="text-[9px] font-black uppercase">Stats</span>
                 </button>
             </nav>
-        </>
+        </div>
     );
 };
 
