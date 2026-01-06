@@ -9,25 +9,23 @@ import { Menu, Moon, Sun, Home, CalendarDays, BarChart2, Sunrise, Bell, CheckCir
 import confetti from 'https://esm.sh/canvas-confetti@1.9.2';
 
 // --- Web Worker for Precision Timing & Drift Correction ---
-// We use a Blob to inline the worker code without needing a separate file in this environment.
 const createWorker = () => {
     const blob = new Blob([`
         let expected = Date.now() + 1000;
         let timeoutId = null;
 
         function step() {
-            const dt = Date.now() - expected; // the drift (positive means we are late)
+            const now = Date.now();
+            const dt = now - expected; // drift
             
             if (dt > 1000) {
-                // We drifted significantly (e.g. tab was suspended), just re-sync
-                expected = Date.now();
+                // If drift is huge (e.g. tab suspension), resync
+                expected = now;
             }
 
-            // Post tick
             self.postMessage('tick');
 
             expected += 1000;
-            // Adjust next timeout by subtracting the drift
             timeoutId = setTimeout(step, Math.max(0, 1000 - dt));
         }
 
@@ -51,7 +49,7 @@ const initAudio = () => {
         audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
     }
     if (audioCtx.state === 'suspended') {
-        audioCtx.resume().catch(e => console.log("Audio resume failed (expected if no interaction)", e));
+        audioCtx.resume().catch(e => console.log("Audio resume failed", e));
     }
     return audioCtx;
 };
@@ -79,22 +77,26 @@ const startAlarmSound = () => {
         
         osc.type = 'square';
         
-        // High-pitch alert pattern
+        // Pattern: High-Low-High
         osc.frequency.setValueAtTime(880, t);
         gain.gain.setValueAtTime(0.1, t);
         gain.gain.linearRampToValueAtTime(0.1, t + 0.1);
         gain.gain.linearRampToValueAtTime(0, t + 0.2);
 
-        osc.frequency.setValueAtTime(1760, t + 0.2);
+        osc.frequency.setValueAtTime(440, t + 0.2);
         gain.gain.setValueAtTime(0.1, t + 0.2);
-        gain.gain.linearRampToValueAtTime(0, t + 0.6);
+        gain.gain.linearRampToValueAtTime(0, t + 0.4);
+
+        osc.frequency.setValueAtTime(880, t + 0.4);
+        gain.gain.setValueAtTime(0.1, t + 0.4);
+        gain.gain.linearRampToValueAtTime(0, t + 0.8);
 
         osc.start(t);
-        osc.stop(t + 0.8);
+        osc.stop(t + 1.0);
     };
 
     playCycle();
-    intervalId = setInterval(playCycle, 1500);
+    intervalId = setInterval(playCycle, 2000);
 
     return () => {
         clearInterval(intervalId);
@@ -139,7 +141,6 @@ const App: React.FC = () => {
             document.documentElement.classList.add('dark');
         }
 
-        // Initialize Audio Context on first interaction
         const handleInteraction = () => {
             initAudio();
             document.removeEventListener('click', handleInteraction);
@@ -148,7 +149,7 @@ const App: React.FC = () => {
         document.addEventListener('click', handleInteraction);
         document.addEventListener('touchstart', handleInteraction);
 
-        // Start Web Worker
+        // Init Worker
         workerRef.current = createWorker();
         workerRef.current.postMessage('start');
 
@@ -158,12 +159,10 @@ const App: React.FC = () => {
         };
     }, []);
 
-    // Persist Tasks
     useEffect(() => {
         localStorage.setItem('pro_tasks', JSON.stringify(tasks));
     }, [tasks]);
 
-    // Theme Toggle
     useEffect(() => {
         if (darkMode) {
             document.documentElement.classList.add('dark');
@@ -174,7 +173,7 @@ const App: React.FC = () => {
         }
     }, [darkMode]);
 
-    // --- Precision Alarm Logic ---
+    // --- Alarm Logic ---
     useEffect(() => {
         if (!workerRef.current) return;
 
@@ -184,6 +183,7 @@ const App: React.FC = () => {
             const todayISO = getLocalISO();
 
             tasks.forEach(t => {
+                // Check task visibility for today & not completed
                 if (shouldShowTask(t, todayISO) && !t.completions.includes(todayISO)) {
                     if (t.time === currentHM) {
                         const notificationKey = `${t.id}-${todayISO}-${currentHM}`;
@@ -202,11 +202,10 @@ const App: React.FC = () => {
     }, [tasks]);
 
     const triggerAlarm = async (task: Task) => {
-        // 1. Audio
         if (stopAlarmRef.current) stopAlarmRef.current();
         const stopFn = startAlarmSound();
         stopAlarmRef.current = stopFn;
-
+        
         // Auto-stop after 60s
         setTimeout(() => {
             if (stopAlarmRef.current === stopFn) {
@@ -215,19 +214,17 @@ const App: React.FC = () => {
             }
         }, 60000);
 
-        // 2. Wake Lock
         if ('wakeLock' in navigator) {
             try {
                 wakeLockRef.current = await navigator.wakeLock.request('screen');
-            } catch (err) {
-                console.error("Wake Lock failed:", err);
+            } catch (err) { 
+                console.warn('Wake Lock request failed:', err); 
             }
         }
 
-        // 3. UI & Notification
         setActiveAlert(task);
         if ('Notification' in window && Notification.permission === 'granted') {
-            new Notification("MOTI-ON: It's Time!", { body: task.text, icon: '/icon.png', requireInteraction: true });
+            new Notification("MOTI-ON: It's Time!", { body: task.text, icon: '/icon.png' });
         }
     };
 
@@ -242,10 +239,12 @@ const App: React.FC = () => {
         setActiveAlert(null);
     };
 
-    // --- Core Logic: View & Sorting ---
-    
-    // Tab Sync Fix: Ensure 'Week' view always starts from Today, ignoring 'selectedDate' cursor
+    // --- Data & Logic ---
     const todayStr = getLocalISO();
+    
+    // Tab Sync Fix: Logic to determine the correct start date for the view
+    // If Week view: Always start from Today.
+    // If Day view: Start from selectedDate.
     const effectiveViewDate = useMemo(() => {
         if (currentView === 'week') return todayStr;
         if (currentView === 'history' && historyDrilldownDate) return historyDrilldownDate;
@@ -257,7 +256,6 @@ const App: React.FC = () => {
         const viewStart = effectiveViewDate;
 
         if (currentView === 'week') {
-            // Collect next 7 days
             const weekIds = new Set<number>();
             for (let i = 0; i < 7; i++) {
                 const d = parseLocalDate(viewStart);
@@ -267,23 +265,19 @@ const App: React.FC = () => {
             }
             visible = tasks.filter(t => weekIds.has(t.id));
         } else {
-            // Day View (History is treated as a day view if drilldown is active)
+            // Day View (or History Drilldown)
             visible = tasks.filter(t => shouldShowTask(t, viewStart));
         }
 
-        // --- Deterministic Sorting ---
-        // 1. Date (Earliest First)
-        // 2. Time (Earliest First)
-        // 3. ID (Creation Order)
+        // --- Strict Ascending Sort ---
         visible.sort((a, b) => {
-            // Helper to determine the "effective date" of a task for sorting purposes
-            const getEffectiveSortDate = (t: Task) => {
+            // Helper to get effective sort date for recurring/weekly tasks
+            const getSortDate = (t: Task) => {
                 if (t.type === 'one-time') return t.dateCreated;
-                // For recurring/weekly, we clamp the date to the viewStart if it started in the past
-                // This ensures "Daily" tasks show up as "Today" in the sort order
-                if (t.dateCreated < viewStart) return viewStart; 
-                
-                // For weekly specific
+                // For recurring, if created in past, it effectively is "today" relative to viewStart
+                if (t.type === 'recurring') {
+                     return t.dateCreated < viewStart ? viewStart : t.dateCreated;
+                }
                 if (t.type === 'weekly' && t.weeklyDay !== undefined) {
                     const start = parseLocalDate(viewStart);
                     const currentDay = start.getDay();
@@ -295,93 +289,89 @@ const App: React.FC = () => {
                 return t.dateCreated;
             };
 
-            const dateA = getEffectiveSortDate(a);
-            const dateB = getEffectiveSortDate(b);
-            
-            if (dateA !== dateB) return dateA.localeCompare(dateB);
+            const dateA = getSortDate(a);
+            const dateB = getSortDate(b);
 
-            // Time Sort (Tasks with time come before tasks without time, OR strictly by string)
-            // Let's go strictly by string. No time ('') is treated as 23:59 to put at end, or 00:00 to put at start.
-            // Requirement: "Deterministic".
-            const timeA = a.time || '23:59'; 
+            // 1. Primary: Date
+            if (dateA !== dateB) return dateA.localeCompare(dateB);
+            
+            // 2. Secondary: Time (Earliest first)
+            const timeA = a.time || '23:59';
             const timeB = b.time || '23:59';
             if (timeA !== timeB) return timeA.localeCompare(timeB);
 
-            return a.id - b.id; 
+            // 3. Tertiary: Creation Order
+            return a.id - b.id;
         });
 
-        // Percentage
-        const completed = visible.filter(t => t.completions.includes(viewStart)); // Note: this calculates completion for the *start* date of view. 
-        // For Week view, percentage is tricky. Let's simplify: 
-        // For Day/History: Exact. 
-        // For Week: Percentage of *all visible tasks* that are completed *on their respective days*.
+        const completed = visible.filter(t => t.completions.includes(viewStart)); 
+        // Note: For Week view progress, we simplify to show "Today's" or "ViewStart's" completion rate 
+        // to keep the header bar consistent with Day view logic.
+        const pct = visible.length > 0 ? Math.round((completed.length / visible.length) * 100) : 0;
         
-        let completedCount = 0;
-        visible.forEach(t => {
-            // Check if completed on its effective date? 
-            // Simplified: Check if completed on viewStart (for day view) 
-            // OR check if completed on any day in the range (for week view - naive approach but effective for visual)
-            if (currentView === 'day' || currentView === 'history') {
-                if (t.completions.includes(viewStart)) completedCount++;
-            } else {
-                // For week, check if completed today/upcoming? 
-                // Let's stick to standard Day View percentage for the header mainly.
-                // If in Week view, header usually shows Today's progress or week's total? 
-                // Let's show Today's progress in header even in Week View to keep motivation high.
-                const today = getLocalISO();
-                if (t.completions.includes(today)) completedCount++; // This counts completions for today specifically
-            }
-        });
-        
-        // Recalculate strict percentage for the progress bar based on CURRENT VIEW context
-        const viewTotal = visible.length;
-        const viewCompleted = visible.filter(t => {
-             // For each task, is it completed on the day it represents in the list?
-             // Since we sorted them, we know their dates.
-             // This is complex for the `visible` array which mixes days. 
-             // Let's default to: Percentage = Completed Tasks on the "viewStart" date (Today).
-             return t.completions.includes(viewStart);
-        }).length;
-        
-        const pct = viewTotal > 0 ? Math.round((viewCompleted / viewTotal) * 100) : 0;
-
         return { sortedVisibleTasks: visible, percentage: pct };
-
     }, [tasks, currentView, effectiveViewDate, historyDrilldownDate]);
 
 
     // --- Actions ---
     const toggleTask = (id: number) => {
-        // Use effectiveViewDate to ensure we mark the correct day
-        // In Week view, we need to know WHICH day the user clicked.
-        // But the `toggle` function is generic. 
-        // We will default to marking 'effectiveViewDate' (Today or Selected Day).
-        // If the task in Week view is for a future date, we should probably mark that future date?
-        // Current architecture limits `completions` to strings. 
-        // For simplicity in this Refactor (Reliability focus), we toggle for the *current context date*.
-        
         setTasks(prev => prev.map(t => {
             if (t.id !== id) return t;
-            
-            // Logic: If in Week View, find the date this task belongs to?
-            // Since we don't pass the clicked date up, we assume the user is working on "Today" or the "Selected Date".
-            // To be safe and deterministic: Toggle the date that acts as the View Context.
-            const targetDate = effectiveViewDate; 
-            
+            const targetDate = effectiveViewDate; // Toggle for the current view context
             const idx = t.completions.indexOf(targetDate);
             let newCompletions = [...t.completions];
             if (idx > -1) newCompletions.splice(idx, 1);
             else newCompletions.push(targetDate);
-            
             return { ...t, completions: newCompletions };
         }));
+    };
+
+    const confirmDelete = (id: number) => setDeleteModalId(id);
+    
+    const executeDelete = () => {
+        if (deleteModalId === null) return;
+        setTasks(prev => prev.map(t => {
+            if (t.id !== deleteModalId) return t;
+            return { ...t, hiddenDates: [...(t.hiddenDates || []), effectiveViewDate] };
+        }));
+        setDeleteModalId(null);
+    };
+
+    const requestMoveTask = (id: number) => setMoveModalId(id);
+
+    const executeMoveTask = () => {
+        if (moveModalId === null) return;
+        const id = moveModalId;
+        const direction = selectedDate > todayStr ? 'backward' : 'forward'; // Simple direction logic
+        
+        setTasks(prev => prev.map(t => {
+            if (t.id !== id) return t;
+            
+            const current = parseLocalDate(effectiveViewDate);
+            const offset = direction === 'forward' ? 1 : -1;
+            current.setDate(current.getDate() + offset);
+            const targetDateStr = getLocalISO(current);
+
+            // Hide on current, Move date to new (if one-time)
+            const newHidden = [...t.hiddenDates, effectiveViewDate];
+            
+            let newDateCreated = t.dateCreated;
+            if (t.type === 'one-time') newDateCreated = targetDateStr;
+
+            return { 
+                ...t, 
+                hiddenDates: newHidden, 
+                dateCreated: newDateCreated,
+                completions: t.completions.filter(c => c !== effectiveViewDate)
+            };
+        }));
+        setMoveModalId(null);
     };
 
     // --- Render Helpers ---
     const quotePool = percentage === 100 && sortedVisibleTasks.length > 0 ? QUOTES.finish : (percentage > 0 ? QUOTES.progress : QUOTES.start);
     const quote = quotePool[todayStr.charCodeAt(todayStr.length - 1) % quotePool.length];
-    
-    // Confetti Effect
+
     useEffect(() => {
         if (percentage === 100 && sortedVisibleTasks.length > 0 && prevPercentageRef.current < 100) {
             confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 } });
@@ -389,7 +379,6 @@ const App: React.FC = () => {
         prevPercentageRef.current = percentage;
     }, [percentage, sortedVisibleTasks.length]);
 
-    // Handle View Switching
     const setViewDate = (view: ViewMode, offset: number = 0) => {
         setCurrentView(view);
         setHistoryDrilldownDate(null);
@@ -398,46 +387,12 @@ const App: React.FC = () => {
             d.setDate(d.getDate() + offset);
             setSelectedDate(getLocalISO(d));
         } else {
-            // Reset selected date to today when going to week/history to ensure clean state
-            setSelectedDate(todayStr);
+            setSelectedDate(todayStr); // Reset cursor when going to Week
         }
-    };
-
-    // Global Swipe Handler
-    const onTouchEnd = () => {
-        if (!touchStart || !touchEnd) return;
-        const dist = touchStart - touchEnd;
-        if (Math.abs(dist) > 50) {
-            const isLeft = dist > 0;
-            // Simplified navigation for cognitive load reduction
-            if (isLeft) {
-                // Swipe Left -> Next
-                if (currentView === 'day' && selectedDate === todayStr) setViewDate('day', 1); // Go Tomorrow
-                else if (currentView === 'day' && selectedDate !== todayStr) setViewDate('week'); // Go Week
-                else if (currentView === 'week') setCurrentView('history'); // Go Stats
-            } else {
-                // Swipe Right -> Prev
-                if (currentView === 'history') setViewDate('week');
-                else if (currentView === 'week') setViewDate('day', 1);
-                else if (currentView === 'day' && selectedDate !== todayStr) setViewDate('day', 0);
-            }
-        }
-        setTouchStart(null);
-        setTouchEnd(null);
     };
 
     return (
-        <div 
-            onTouchStart={e => {
-                const target = e.target as HTMLElement;
-                if (!target.closest('.no-swipe')) {
-                    setTouchStart(e.targetTouches[0].clientX);
-                }
-            }}
-            onTouchMove={e => setTouchEnd(e.targetTouches[0].clientX)}
-            onTouchEnd={onTouchEnd}
-            className="min-h-screen pb-safe"
-        >
+        <div className="min-h-screen pb-safe">
             {activeAlert && (
                 <div className="fixed inset-0 z-[150] flex items-center justify-center p-6 bg-slate-900/90 backdrop-blur-md animate-fade-in">
                     <div className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-[2.5rem] p-8 text-center shadow-2xl border-4 border-indigo-500 animate-bounce-in">
@@ -445,8 +400,7 @@ const App: React.FC = () => {
                             <Bell size={48} className="text-indigo-600" />
                         </div>
                         <h2 className="text-3xl font-black text-slate-900 dark:text-white mb-2">{activeAlert.text}</h2>
-                        <p className="text-slate-500 font-bold mb-8">It's time to move.</p>
-                        <button onClick={() => { toggleTask(activeAlert.id); dismissAlarm(); }} className="w-full py-5 bg-indigo-600 text-white rounded-2xl text-sm font-black uppercase tracking-widest shadow-xl hover:scale-105 transition-transform mb-3">
+                        <button onClick={() => { toggleTask(activeAlert.id); dismissAlarm(); }} className="w-full py-5 bg-indigo-600 text-white rounded-2xl text-sm font-black uppercase tracking-widest shadow-xl hover:scale-105 transition-transform mb-3 mt-8">
                             Complete Task
                         </button>
                         <button onClick={dismissAlarm} className="w-full py-4 text-slate-400 font-bold hover:text-indigo-500">Dismiss</button>
@@ -454,11 +408,50 @@ const App: React.FC = () => {
                 </div>
             )}
 
-            {editingTask && <EditTaskModal task={editingTask} onChange={setEditingTask} onClose={() => {
-                if(!editingTask.text.trim() && editingTask.id < 0) { setEditingTask(null); return; }
-                setTasks(prev => editingTask.id < 0 ? [editingTask, ...prev] : prev.map(t => t.id === editingTask.id ? editingTask : t));
-                setEditingTask(null);
-            }} onDelete={(id) => { setTasks(prev => prev.filter(t => t.id !== id)); setEditingTask(null); }} />}
+            {editingTask && (
+                <EditTaskModal 
+                    task={editingTask} 
+                    onChange={setEditingTask} 
+                    onClose={() => {
+                        if (!editingTask.text.trim() && editingTask.id < 0) { setEditingTask(null); return; }
+                        setTasks(prev => editingTask.id < 0 ? [editingTask, ...prev] : prev.map(t => t.id === editingTask.id ? editingTask : t));
+                        setEditingTask(null);
+                    }} 
+                    onDelete={(id) => {
+                        // If new task (id < 0), just close. If existing, open delete modal
+                        if (id < 0) setEditingTask(null);
+                        else {
+                            setDeleteModalId(id);
+                            setEditingTask(null);
+                        }
+                    }} 
+                />
+            )}
+
+            {deleteModalId !== null && (
+                <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm" onClick={() => setDeleteModalId(null)}>
+                     <div className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-[2rem] p-8 shadow-2xl animate-fade-in-up">
+                        <h3 className="text-xl font-black text-center dark:text-white">Remove Task?</h3>
+                        <p className="text-slate-500 text-sm font-bold text-center mt-3">This will hide the task from today's list.</p>
+                        <div className="flex gap-4 mt-8">
+                            <button onClick={() => setDeleteModalId(null)} className="flex-1 py-4 bg-slate-100 dark:bg-slate-800 rounded-2xl text-[10px] font-black uppercase text-slate-500 hover:bg-slate-200">Cancel</button>
+                            <button onClick={executeDelete} className="flex-1 py-4 bg-red-600 rounded-2xl text-[10px] font-black uppercase text-white shadow-lg">Remove</button>
+                        </div>
+                     </div>
+                </div>
+            )}
+
+            {moveModalId !== null && (
+                <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm" onClick={() => setMoveModalId(null)}>
+                     <div className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-[2rem] p-8 shadow-2xl animate-fade-in-up">
+                        <h3 className="text-xl font-black text-center dark:text-white">Move Task?</h3>
+                        <div className="flex gap-4 mt-8">
+                            <button onClick={() => setMoveModalId(null)} className="flex-1 py-4 bg-slate-100 dark:bg-slate-800 rounded-2xl text-[10px] font-black uppercase text-slate-500 hover:bg-slate-200">Cancel</button>
+                            <button onClick={executeMoveTask} className="flex-1 py-4 bg-indigo-600 rounded-2xl text-[10px] font-black uppercase text-white shadow-lg">Move</button>
+                        </div>
+                     </div>
+                </div>
+            )}
 
             <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} selectedDate={selectedDate} onSelectDate={(d) => { setSelectedDate(d); setCurrentView('day'); }} />
 
@@ -505,7 +498,7 @@ const App: React.FC = () => {
                 ) : (
                     <>
                         {currentView === 'day' && selectedDate === todayStr && !historyDrilldownDate && (
-                            <AddTask onTrigger={() => setEditingTask({ id: -Date.now(), text: '', type: 'one-time', category: 'personal', dateCreated: selectedDate, completions: [], hiddenDates: [] })} />
+                            <AddTask onTrigger={() => setEditingTask({ id: -Date.now(), text: '', type: 'one-time', category: 'personal', dateCreated: selectedDate, completions: [], hiddenDates: [], notes: '', weeklyDay: new Date().getDay() })} />
                         )}
                         {historyDrilldownDate && (
                              <button onClick={() => setHistoryDrilldownDate(null)} className="mb-4 text-sm font-bold text-indigo-500 hover:underline">← Back to Stats</button>
@@ -514,10 +507,10 @@ const App: React.FC = () => {
                             tasks={sortedVisibleTasks} 
                             contextDate={effectiveViewDate} 
                             onToggle={toggleTask} 
-                            onDelete={(id) => setDeleteModalId(id)} 
-                            onMoveTask={(id) => setMoveModalId(id)} 
+                            onDelete={confirmDelete} 
+                            onMoveTask={requestMoveTask} 
                             onEdit={(t) => setEditingTask({...t})}
-                            // Pass empty functions for unnecessary props in this refactor
+                            // Compatibility props
                             onUpdateText={()=>{}} onUpdateTime={()=>{}} onCycleCategory={()=>{}} onCycleType={()=>{}} onUpdateWeeklyDay={()=>{}} onUpdateNotes={()=>{}} onUpdateCategory={()=>{}} onUpdateType={()=>{}} onReorder={()=>{}}
                             moveDirection={selectedDate > todayStr ? 'backward' : 'forward'}
                         />
@@ -525,7 +518,7 @@ const App: React.FC = () => {
                 )}
             </main>
 
-            <nav className="fixed bottom-0 left-0 right-0 bg-white/90 dark:bg-slate-900/90 backdrop-blur-2xl border-t border-slate-100 dark:border-slate-800 px-6 py-4 pb-safe flex justify-between items-center z-50 transition-all duration-300 no-swipe">
+            <nav className="fixed bottom-0 left-0 right-0 bg-white/90 dark:bg-slate-900/90 backdrop-blur-2xl border-t border-slate-100 dark:border-slate-800 px-6 py-4 pb-safe flex justify-between items-center z-50">
                 <button onClick={() => setViewDate('day', 0)} className={`flex flex-col items-center gap-1.5 ${currentView === 'day' && selectedDate === todayStr ? 'text-indigo-600 scale-110' : 'text-slate-400'} transition-all`}>
                     <Home size={20} />
                     <span className="text-[9px] font-black uppercase">Today</span>
