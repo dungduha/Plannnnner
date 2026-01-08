@@ -86,7 +86,7 @@ const startAlarmSound = () => {
 
         osc.frequency.setValueAtTime(880, t + 0.4);
         gain.gain.setValueAtTime(0.1, t + 0.4);
-        gain.gain.linearRampToValueAtTime(0, t + 0.8);
+        gain.gain.linearRampToValueAtTime(0, t + 0.4);
 
         osc.start(t);
         osc.stop(t + 1.0);
@@ -111,7 +111,7 @@ const App: React.FC = () => {
     const [darkMode, setDarkMode] = useState(false);
     const [historyDrilldownDate, setHistoryDrilldownDate] = useState<string | null>(null);
     const [deleteModalId, setDeleteModalId] = useState<number | null>(null);
-    const [moveModalId, setMoveModalId] = useState<number | null>(null); // Kept for logic compatibility, though immediate move is used
+    const [moveModalId, setMoveModalId] = useState<number | null>(null); 
     const [activeAlert, setActiveAlert] = useState<Task | null>(null);
     const [editingTask, setEditingTask] = useState<Task | null>(null);
     const [undoAction, setUndoAction] = useState<{ label: string, handler: () => void } | null>(null);
@@ -125,7 +125,7 @@ const App: React.FC = () => {
     const stopAlarmRef = useRef<(() => void) | null>(null);
     const prevPercentageRef = useRef(0);
     const workerRef = useRef<Worker | null>(null);
-    const tasksRef = useRef(tasks); // Ref to hold latest tasks for Worker callback
+    const tasksRef = useRef(tasks); 
     const undoTimeoutRef = useRef<any>(null);
 
     // Keep tasks ref synced
@@ -137,7 +137,13 @@ const App: React.FC = () => {
     // --- Initialization ---
     useEffect(() => {
         const storedTasks = localStorage.getItem('pro_tasks');
-        if (storedTasks) setTasks(JSON.parse(storedTasks));
+        if (storedTasks) {
+            const parsed = JSON.parse(storedTasks);
+            // MIGRATION: Ensure all existing tasks have positive IDs
+            // This fixes the "Duplicate on Edit" bug where saved tasks retained negative "Draft" IDs
+            const migrated = parsed.map((t: Task) => ({...t, id: Math.abs(t.id)}));
+            setTasks(migrated);
+        }
 
         const storedTheme = localStorage.getItem('theme');
         const sysDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -188,9 +194,6 @@ const App: React.FC = () => {
                 if (t.time === currentHM) {
                     const notificationKey = `${t.id}-${todayISO}-${currentHM}`;
                     if (!notifiedTasksRef.current.has(notificationKey)) {
-                        // We must trigger via state or ref to avoid stale closure issues, 
-                        // but here we just call the trigger function which uses latest refs where possible
-                        // However, we need to pass the 't' from the ref.
                         triggerAlarm(t);
                         notifiedTasksRef.current.add(notificationKey);
                     }
@@ -204,7 +207,6 @@ const App: React.FC = () => {
         const stopFn = startAlarmSound();
         stopAlarmRef.current = stopFn;
         
-        // Auto-stop after 60s
         setTimeout(() => {
             if (stopAlarmRef.current === stopFn) {
                 stopFn();
@@ -242,8 +244,6 @@ const App: React.FC = () => {
     // --- Data & Logic ---
     const todayStr = getLocalISO();
     
-    // Tab Sync Fix: When in Week view, strictly anchor to Today (or start of week)
-    // This prevents "Blank List" when switching from Tomorrow -> Week
     const effectiveViewDate = useMemo(() => {
         if (currentView === 'week') return todayStr;
         if (currentView === 'history' && historyDrilldownDate) return historyDrilldownDate;
@@ -264,16 +264,12 @@ const App: React.FC = () => {
             }
             visible = tasks.filter(t => weekIds.has(t.id));
         } else {
-            // Day View (or History Drilldown)
             visible = tasks.filter(t => shouldShowTask(t, viewStart));
         }
 
-        // --- Strict Date Sort, then Manual Order ---
         visible.sort((a, b) => {
-            // Helper to get effective sort date for recurring/weekly tasks
             const getSortDate = (t: Task) => {
                 if (t.type === 'one-time') return t.dateCreated;
-                // For recurring, if created in past, it effectively is "today" relative to viewStart
                 if (t.type === 'recurring') {
                      return t.dateCreated < viewStart ? viewStart : t.dateCreated;
                 }
@@ -291,11 +287,7 @@ const App: React.FC = () => {
             const dateA = getSortDate(a);
             const dateB = getSortDate(b);
 
-            // 1. Primary: Date (Strict Ascending)
             if (dateA !== dateB) return dateA.localeCompare(dateB);
-            
-            // 2. Secondary: If dates are equal (e.g. Day View), respect Array Order (Manual Sort)
-            // We do NOT sort by time here to allow Drag & Drop to work.
             return 0;
         });
 
@@ -333,15 +325,21 @@ const App: React.FC = () => {
         }
     };
 
-    // Immediate Move (Logic Fixed for Rollover)
+    // Trigger confirmation modal
     const handleMoveTask = (id: number) => {
+        setMoveModalId(id);
+    };
+
+    // Logic executed after confirmation
+    const executeMoveTask = () => {
+        if (moveModalId === null) return;
+        const id = moveModalId;
         const oldTasks = [...tasks];
         const direction = selectedDate > todayStr ? -1 : 1; 
         
         setTasks(prev => prev.map(t => {
             if (t.id !== id) return t;
             
-            // USE NATIVE DATE OBJECT FOR ROLLOVER SAFETY
             const d = parseLocalDate(effectiveViewDate);
             d.setDate(d.getDate() + direction);
             const targetIso = getLocalISO(d);
@@ -349,7 +347,6 @@ const App: React.FC = () => {
             const newHidden = [...(t.hiddenDates || []), effectiveViewDate];
             let newDateCreated = t.dateCreated;
             
-            // Only update dateCreated for one-time tasks to physically move them
             if (t.type === 'one-time') newDateCreated = targetIso;
             
             return { 
@@ -362,6 +359,7 @@ const App: React.FC = () => {
 
         const label = direction === 1 ? 'Moved to Tomorrow' : 'Moved to Yesterday';
         setUndo(label, oldTasks);
+        setMoveModalId(null);
     };
 
     const handleDelete = (id: number) => {
@@ -401,7 +399,7 @@ const App: React.FC = () => {
         setCurrentView(view);
         setHistoryDrilldownDate(null);
         if (view === 'day') {
-            const d = new Date(); // Start from actual today
+            const d = new Date();
             d.setDate(d.getDate() + offset);
             setSelectedDate(getLocalISO(d));
         } else {
@@ -426,7 +424,6 @@ const App: React.FC = () => {
                 </div>
             )}
 
-            {/* Undo Toast */}
             {undoAction && (
                 <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[100] animate-fade-in-up">
                     <button 
@@ -448,12 +445,23 @@ const App: React.FC = () => {
                     task={editingTask} 
                     onChange={setEditingTask} 
                     onClose={() => {
-                        if (!editingTask.text.trim() && editingTask.id < 0) { setEditingTask(null); return; }
-                        setTasks(prev => editingTask.id < 0 ? [editingTask, ...prev] : prev.map(t => t.id === editingTask.id ? editingTask : t));
+                        if (!editingTask.text.trim()) {
+                            setEditingTask(null);
+                            return;
+                        }
+                        
+                        setTasks(prev => {
+                            const exists = prev.some(t => t.id === editingTask.id);
+                            if (exists) {
+                                return prev.map(t => t.id === editingTask.id ? editingTask : t);
+                            } else {
+                                const newTask = { ...editingTask, id: Math.abs(editingTask.id) };
+                                return [newTask, ...prev];
+                            }
+                        });
                         setEditingTask(null);
                     }} 
                     onDelete={(id) => {
-                        // If new task (id < 0), just close. If existing, open delete modal
                         if (id < 0) setEditingTask(null);
                         else {
                             setDeleteModalId(id);
@@ -476,6 +484,26 @@ const App: React.FC = () => {
                 </div>
             )}
 
+            {/* Move Confirmation Modal */}
+            {moveModalId !== null && (
+                <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm" onClick={() => setMoveModalId(null)}>
+                     <div className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-[2rem] p-8 shadow-2xl animate-fade-in-up" onClick={e => e.stopPropagation()}>
+                        <h3 className="text-xl font-black text-center dark:text-white">
+                            {selectedDate > todayStr ? 'Pull to Yesterday?' : 'Push to Tomorrow?'}
+                        </h3>
+                        <p className="text-slate-500 text-sm font-bold text-center mt-3">
+                            {selectedDate > todayStr 
+                                ? 'This will move the task back to the previous day.' 
+                                : 'This will reschedule the task for the next day.'}
+                        </p>
+                        <div className="flex gap-4 mt-8">
+                            <button onClick={() => setMoveModalId(null)} className="flex-1 py-4 bg-slate-100 dark:bg-slate-800 rounded-2xl text-[10px] font-black uppercase text-slate-500 hover:bg-slate-200">Cancel</button>
+                            <button onClick={executeMoveTask} className="flex-1 py-4 bg-indigo-600 rounded-2xl text-[10px] font-black uppercase text-white shadow-lg">Confirm</button>
+                        </div>
+                     </div>
+                </div>
+            )}
+
             <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} selectedDate={selectedDate} onSelectDate={(d) => { setSelectedDate(d); setCurrentView('day'); }} />
 
             <main className="max-w-xl mx-auto px-6 pt-12 pb-32">
@@ -492,7 +520,7 @@ const App: React.FC = () => {
                                      parseLocalDate(selectedDate).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
                                 </h1>
                                 <div className="flex items-center gap-3 mt-2">
-                                    <p className="text-slate-400 font-bold text-xs uppercase italic truncate max-w-[200px]">"{quote}"</p>
+                                    <p className="text-slate-400 font-bold text-xs uppercase italic">"{quote}"</p>
                                     <button onClick={() => setDarkMode(!darkMode)} className="text-slate-300 hover:text-indigo-500">
                                         {darkMode ? <Sun size={16} /> : <Moon size={16} />}
                                     </button>
@@ -549,7 +577,7 @@ const App: React.FC = () => {
                 </button>
                 <button onClick={() => setViewDate('day', 1)} className={`flex flex-col items-center gap-1.5 ${currentView === 'day' && selectedDate !== todayStr ? 'text-indigo-600 scale-110' : 'text-slate-400'} transition-all`}>
                     <Sunrise size={20} strokeWidth={2.5} />
-                    <span className="text-[9px] font-black uppercase">Tmrw</span>
+                    <span className="text-[9px] font-black uppercase">Tomorrow</span>
                 </button>
                 <button onClick={() => setViewDate('week')} className={`flex flex-col items-center gap-1.5 ${currentView === 'week' ? 'text-indigo-600 scale-110' : 'text-slate-400'} transition-all`}>
                     <CalendarDays size={20} strokeWidth={2.5} />

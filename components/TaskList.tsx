@@ -281,6 +281,8 @@ export const EditTaskModal: React.FC<{
         onChange({ ...task, [field]: value });
     };
 
+    const isNewTask = task.id < 0;
+
     return (
         <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" onClick={onClose}></div>
@@ -288,7 +290,7 @@ export const EditTaskModal: React.FC<{
                 
                 <div className="flex justify-between items-center shrink-0">
                     <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">
-                        {task.id < 0 ? 'New Task' : 'Edit Task'}
+                        {isNewTask ? 'New Task' : 'Edit Task'}
                     </h3>
                     <button onClick={onClose} className="p-2 bg-slate-100 dark:bg-slate-800 rounded-full text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
                         <X size={16} strokeWidth={3} />
@@ -438,11 +440,11 @@ export const EditTaskModal: React.FC<{
                 
                 {/* Footer Actions */}
                 <div className="pt-2 border-t dark:border-slate-800 flex gap-3 shrink-0">
-                    {task.id > 0 && (
-                         <button onClick={() => { onDelete(task.id); onClose(); }} className="p-4 bg-red-50 text-red-500 rounded-xl flex-1 font-black text-xs uppercase hover:bg-red-100 transition-colors">Delete Task</button>
+                    {!isNewTask && (
+                         <button onClick={() => { onDelete(task.id); onClose(); }} className="p-4 bg-red-50 dark:bg-red-900/20 text-red-500 dark:text-red-400 rounded-xl flex-1 font-black text-xs uppercase hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors">Delete</button>
                     )}
-                    <button onClick={onClose} className="p-4 bg-slate-900 text-white dark:bg-white dark:text-slate-900 rounded-xl flex-1 font-black text-xs uppercase shadow-lg hover:scale-[1.02] active:scale-[0.98] transition-all">
-                        {task.id > 0 ? 'Done' : 'Add Task'}
+                    <button onClick={onClose} className="p-4 bg-indigo-600 text-white rounded-xl flex-1 font-black text-xs uppercase shadow-lg hover:scale-[1.02] active:scale-[0.98] transition-all">
+                        {isNewTask ? 'Add Task' : 'Save Changes'}
                     </button>
                 </div>
             </div>
